@@ -1,14 +1,6 @@
-//
-//  HealthDataViewModel.swift
-//  HealthProctor
-//
-//  Created by Aditya Kumar on 24/08/25.
-//
 import Foundation
-import SwiftUI
 import HealthKit
 
-/// View model that exposes health data to the UI.
 @MainActor
 final class HealthDataViewModel: ObservableObject {
     @Published var stepCount: Double = 0
@@ -16,42 +8,26 @@ final class HealthDataViewModel: ObservableObject {
     @Published var activeEnergy: Double = 0
     @Published var errorMessage: String?
 
-    init() {
-        Task { await requestAuthorization() }
-    }
-
-    func requestAuthorization() async {
-        do {
-            let success = try await HealthKitManager.shared.requestAuthorization()
-            if success { await fetchAllHealthData() }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func fetchAllHealthData() async {
-        async let steps = fetchStepCount()
-        async let rate = fetchHeartRate()
-        async let energy = fetchActiveEnergy()
-        _ = await (steps, rate, energy)
-    }
+        print("📲 [HealthDataViewModel] Starting data fetch...")
 
-    func fetchStepCount() async {
-        if let sample = try? await HealthKitManager.shared.fetchMostRecentSample(for: .stepCount) {
-            stepCount = sample.quantity.doubleValue(for: HKUnit.count())
-        }
-    }
+        do {
+            let (steps, heartRate, energy) = try await HealthKitManager.shared.fetchMetrics()
+            self.stepCount = steps
+            self.heartRate = heartRate
+            self.activeEnergy = energy
 
-    func fetchHeartRate() async {
-        if let sample = try? await HealthKitManager.shared.fetchMostRecentSample(for: .heartRate) {
-            heartRate = sample.quantity.doubleValue(for: HKUnit.count()
-                                                    .unitDivided(by: HKUnit.minute()))
-        }
-    }
+            print("✅ [HealthDataViewModel] Health data updated: steps=\(steps), heartRate=\(heartRate), energy=\(energy)")
 
-    func fetchActiveEnergy() async {
-        if let sample = try? await HealthKitManager.shared.fetchMostRecentSample(for: .activeEnergyBurned) {
-            activeEnergy = sample.quantity.doubleValue(for: HKUnit.kilocalorie())
+            if steps == 0 && heartRate == 0 && energy == 0 {
+                self.errorMessage = "No recent health data available."
+            } else {
+                self.errorMessage = nil
+            }
+
+        } catch {
+            print("❌ [HealthDataViewModel] Failed to fetch health data: \(error.localizedDescription)")
+            self.errorMessage = "Failed to fetch health data."
         }
     }
 }

@@ -1,50 +1,79 @@
-//
-//  ContentView.swift
-//  HealthProctor
-//
-//  Created by Aditya Kumar on 24/08/25.
-//
-
 import SwiftUI
+import Foundation
 
-/// A simple type that wraps an error message and conforms to `Identifiable`. This is needed
-/// to use SwiftUI's `alert(item:content:)` modifier, which requires the bound item to conform
-/// to `Identifiable`.
-struct ErrorMessage: Identifiable {
-    let id = UUID()
-    let message: String
+// A single alert router for the whole screen.
+enum ActiveAlert: Identifiable, Equatable {
+    case missingKey
+    case scanFailed
+    case analysisError(String)
+
+    var id: String {
+        switch self {
+        case .missingKey: return "missingKey"
+        case .scanFailed: return "scanFailed"
+        case .analysisError(let msg): return "analysisError:\(msg)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .missingKey: return "AI Key Required"
+        case .scanFailed: return "Scan Failed"
+        case .analysisError: return "Error"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .missingKey:
+            return "Please configure at least one AI provider's API key in Settings before scanning food."
+        case .scanFailed:
+            return "We couldn’t identify the food clearly. Please try scanning again."
+        case .analysisError(let msg):
+            return msg
+        }
+    }
 }
 
-/// Main screen showing health metrics and scanned foods.
 struct ContentView: View {
     @StateObject private var healthViewModel = HealthDataViewModel()
+    @ObservedObject private var keyStore = AIKeyStore.shared
+
+    // UI State
     @State private var scannedFoods: [String] = []
     @State private var showingScanner = false
     @State private var isProcessing = false
-    @State private var analysisError: ErrorMessage?
     @State private var isRefreshing = false
+    @State private var activeAlert: ActiveAlert?
 
-        // No date-specific state yet. We'll sync the current day's health data when the user taps the sync button.
+    // Cached values
+    @AppStorage("cachedSteps") private var cachedSteps: Double = 0
+    @AppStorage("cachedHeartRate") private var cachedHeartRate: Double = 0
+    @AppStorage("cachedEnergy") private var cachedEnergy: Double = 0
 
     var body: some View {
         NavigationView {
             VStack(alignment: .leading) {
-                // Show errors if HealthKit authorization fails
+                // HealthKit errors (non-blocking)
                 if let errorMsg = healthViewModel.errorMessage {
                     Text("HealthKit Error: \(errorMsg)")
                         .foregroundColor(.red)
                         .padding(.horizontal)
                 }
-                // Display health metrics
+
+                // Metrics (fallback to cached if current == 0)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Steps: \(Int(healthViewModel.stepCount))")
-                    Text(String(format: "Heart Rate: %.1f BPM", healthViewModel.heartRate))
-                    Text(String(format: "Active Energy: %.0f kcal", healthViewModel.activeEnergy))
+                    Text("Steps: \(Int(healthViewModel.stepCount > 0 ? healthViewModel.stepCount : cachedSteps))")
+                    Text(String(format: "Heart Rate: %.1f BPM",
+                                healthViewModel.heartRate > 0 ? healthViewModel.heartRate : cachedHeartRate))
+                    Text(String(format: "Active Energy: %.0f kcal",
+                                healthViewModel.activeEnergy > 0 ? healthViewModel.activeEnergy : cachedEnergy))
                 }
                 .font(.headline)
-                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
 
-                // List of logged foods
+                // Logged Foods
                 if scannedFoods.isEmpty {
                     Text("No foods logged yet.")
                         .foregroundColor(.secondary)
@@ -52,7 +81,6 @@ struct ContentView: View {
                 } else {
                     List {
                         Section(header: Text("Logged Foods")) {
-                            // Use \(.self) to uniquely identify each string in the array.
                             ForEach(scannedFoods, id: \.self) { item in
                                 Text(item)
                             }
@@ -62,78 +90,96 @@ struct ContentView: View {
                 }
 
                 Spacer()
-
-                // Button to launch camera
-                Button(action: { showingScanner = true }) {
-                    Text(isProcessing ? "Processing…" : "Scan Food")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(isProcessing ? Color.gray : Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                }
-                .padding()
-                .disabled(isProcessing)
-
-                // Removed the bottom sync button; the refresh action is now in the navigation bar.
             }
-            .navigationTitle("Health Proctor")
+            .navigationTitle("My Health Pal")
             .toolbar {
-                // Add a refresh icon in the navigation bar. When tapped, it will show a spinner while fetching data.
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    // Camera
+                    Button {
+                        let hasValidKey = keyStore.keys.values.contains {
+                            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }
+                        if hasValidKey {
+                            showingScanner = true
+                        } else {
+                            // Ensure main-thread update to trigger alert
+                            Task { @MainActor in
+                                activeAlert = .missingKey
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "camera")
+                    }
+                    .disabled(isProcessing)
+
+                    // Refresh
                     if isRefreshing {
-                        // Show a built-in spinner during refresh
                         ProgressView()
                     } else {
-                        Button(action: {
-                            // Log the button tap and start refreshing
-                            print("Refresh button tapped at \(Date())")
+                        Button {
                             isRefreshing = true
-                            print("isRefreshing set to true")
                             Task {
-                                print("Starting HealthKit data refresh at \(Date())")
-                                // Asynchronously refresh health data.
                                 await healthViewModel.fetchAllHealthData()
-                                print("Finished HealthKit data refresh at \(Date())")
-                                print("Adding an delay for animation")
-                                try? await Task.sleep(nanoseconds: 300_000_000)  // 0.3 seconds
-                                print("Delay Complete")
+                                cacheMetrics()
                                 isRefreshing = false
-                                print("isRefreshing set to false")
                             }
-                        }) {
+                        } label: {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
-                }
-            }
-            .sheet(isPresented: $showingScanner) {
-                // Present the camera; when the user captures a photo,
-                // send it to the analysis service and append the result.
-                FoodScannerView { image in
-                    Task {
-                        isProcessing = true
-                        do {
-                            let result = try await FoodAnalysisService.analyzeFood(image: image)
-                            scannedFoods.append(result)
-                            analysisError = nil
-                        } catch {
-                            analysisError = ErrorMessage(message: error.localizedDescription)
-                        }
-                        isProcessing = false
+
+                    // Settings
+                    NavigationLink(destination: AISettingsView()) {
+                        Image(systemName: "gear")
                     }
                 }
             }
-            .alert(item: $analysisError) { error in
-                Alert(title: Text("Error"),
-                      message: Text(error.message),
-                      dismissButton: .default(Text("OK")))
+            // Camera sheet
+            .sheet(isPresented: $showingScanner) {
+                FoodScannerView { image in
+                    Task {
+                        await MainActor.run { isProcessing = true }
+                        do {
+                            let result = try await FoodAnalysisService.analyzeFood(image: image)
+                            await MainActor.run {
+                                if result == "ErrorInScanning" {
+                                    activeAlert = .scanFailed
+                                } else {
+                                    scannedFoods.append(result)
+                                }
+                            }
+                        } catch {
+                            await MainActor.run {
+                                activeAlert = .analysisError(error.localizedDescription)
+                            }
+                        }
+                        await MainActor.run { isProcessing = false }
+                    }
+                }
+            }
+            // Single, unified alert
+            .alert(item: $activeAlert) { active in
+                Alert(
+                    title: Text(active.title),
+                    message: Text(active.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+            // Initial load + cache
+            .task {
+                await healthViewModel.fetchAllHealthData()
+                cacheMetrics()
             }
         }
     }
+
+    private func cacheMetrics() {
+        cachedSteps = healthViewModel.stepCount
+        cachedHeartRate = healthViewModel.heartRate
+        cachedEnergy = healthViewModel.activeEnergy
+    }
 }
 
-// Preview provider for SwiftUI canvas
 #Preview {
     ContentView()
 }

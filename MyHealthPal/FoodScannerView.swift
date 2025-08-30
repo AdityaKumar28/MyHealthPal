@@ -1,44 +1,57 @@
 //
 //  FoodScannerView.swift
-//  HealthProctor
+//  MyHealthPal
 //
 //  Created by Aditya Kumar on 24/08/25.
 //
 
-
 import SwiftUI
 import UIKit
 
-/// Presents the camera for capturing a food photo.
 struct FoodScannerView: UIViewControllerRepresentable {
-    var completion: (UIImage) -> Void
-    @Environment(\.presentationMode) var presentationMode
+    var onImageCaptured: (UIImage) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
+        print("📸 [FoodScannerView] Initializing camera UI")
         let picker = UIImagePickerController()
         picker.delegate = context.coordinator
         picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.allowsEditing = false
         return picker
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+        // No need to update
+    }
 
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
         let parent: FoodScannerView
-        init(_ parent: FoodScannerView) { self.parent = parent }
+
+        init(_ parent: FoodScannerView) {
+            self.parent = parent
+        }
 
         func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            print("📸 [FoodScannerView] Image captured")
+
+            picker.dismiss(animated: true)
+
             if let image = info[.originalImage] as? UIImage {
-                parent.completion(image)
+                parent.onImageCaptured(image)
+            } else {
+                print("⚠️ [FoodScannerView] Failed to get image from picker")
             }
-            parent.presentationMode.wrappedValue.dismiss()
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.presentationMode.wrappedValue.dismiss()
+            print("❌ [FoodScannerView] User canceled image picker")
+            picker.dismiss(animated: true)
         }
     }
 }
