@@ -6,7 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BF37704D2E62B7E300F3017E /* Readme.md in Resources */ = {isa = PBXBuildFile; fileRef = BF37704C2E62B7DB00F3017E /* Readme.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		BF37704C2E62B7DB00F3017E /* Readme.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Readme.md; sourceTree = "<group>"; };
 		BFA173E82E5AA29600D6D988 /* MyHealthPal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyHealthPal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -45,6 +50,7 @@
 		BFA173DF2E5AA29600D6D988 = {
 			isa = PBXGroup;
 			children = (
+				BF37704C2E62B7DB00F3017E /* Readme.md */,
 				BFA173EA2E5AA29600D6D988 /* MyHealthPal */,
 				BFA173E92E5AA29600D6D988 /* Products */,
 			);
@@ -122,6 +128,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF37704D2E62B7E300F3017E /* Readme.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
