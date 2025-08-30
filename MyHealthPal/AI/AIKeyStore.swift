@@ -1,41 +1,42 @@
-// AIKeyStore.swift
 import Foundation
 import Combine
+
+enum AIProvider: String, CaseIterable, Codable {
+    case gemini
+}
 
 final class AIKeyStore: ObservableObject {
     static let shared = AIKeyStore()
 
     @Published var keys: [AIProvider: String] = [:]
 
-    private init() {
-        loadKeys()
-    }
+    private let storageKey = "ai_keys_v1"
 
-    func loadKeys() {
-        var loaded: [AIProvider: String] = [:]
-        for provider in AIProvider.allCases {
-            let key = UserDefaults.standard.string(forKey: provider.userDefaultsKey) ?? ""
-            print("[AIKeyStore] Loaded key for \(provider.rawValue): \(key.isEmpty ? "[Empty]" : "[Set]")")
-            loaded[provider] = key
-        }
-        DispatchQueue.main.async {
-            self.keys = loaded
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([AIProvider: String].self, from: data) {
+            keys = decoded
         }
     }
 
     func saveKey(_ key: String, for provider: AIProvider) {
-        print("[AIKeyStore] Saving key for \(provider.rawValue): \(key)")
-        UserDefaults.standard.set(key, forKey: provider.userDefaultsKey)
-        DispatchQueue.main.async {
-            self.keys[provider] = key
-        }
+        keys[provider] = key
+        persist()
+    }
+
+    func clearKey(for provider: AIProvider) {
+        keys[provider] = ""
+        persist()
     }
 
     func getKey(for provider: AIProvider) -> String? {
-        return keys[provider]
+        let v = keys[provider]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return v.isEmpty ? nil : v
     }
 
-    func hasAnyValidKey() -> Bool {
-        return keys.values.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    private func persist() {
+        if let data = try? JSONEncoder().encode(keys) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
     }
 }

@@ -1,77 +1,104 @@
+//  FoodAnalysisService.swift
+//  MyHealthPal
+//
+//  Created by Aditya Kumar on 25/08/25.
+//
+
 import Foundation
 import UIKit
 
-enum FoodAnalysisError: Error {
-    case noAPIKeyConfigured
-    case failedToAnalyze
-    case networkError(Error)
+/// The result of analyzing a food image.
+enum FoodAnalysisResult {
+    /// Parsed successfully with an approximate calorie number and optional textual description.
+    case ok(calories: Int, description: String?)
+    /// The image was unusable or the AI could not confidently identify the food.
+    case errorInScanning
 }
 
 struct FoodAnalysisService {
-    static func analyzeFood(image: UIImage) async throws -> String {
-        print("🧠 Starting food analysis...")
-
-        // Fetch the first non-empty key from the keystore
-        let keys = AIKeyStore.shared.keys
-        let activeKey = keys.first(where: { !$0.value.isEmpty })
-
-        guard let (provider, apiKey) = activeKey else {
-            print("❌ No AI key configured.")
+    static func analyzeFood(image: UIImage) async throws -> FoodAnalysisResult {
+        // 1) Pick first non-empty key
+        guard let (provider, apiKey) = AIKeyStore.shared.keys.first(where: {
+            !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
             throw FoodAnalysisError.noAPIKeyConfigured
         }
+        print("🔐 Using key for \(provider.rawValue)")
 
-        print("🔐 Using key for \(provider.rawValue): \(apiKey.prefix(6))******")
-
-        // Convert image to Base64
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            print("❌ Failed to compress image.")
+        // 2) Image -> base64
+        guard let data = image.jpegData(compressionQuality: 0.8) else {
             throw FoodAnalysisError.failedToAnalyze
         }
-        let base64Image = imageData.base64EncodedString()
+        let base64 = data.base64EncodedString()
 
-        // Updated Prompt
+        // 3) Strict JSON prompt
         let prompt = """
-        Estimate the calories in this food. Return only a number with no extra text or explanation.
-        If the image is not usable or you cannot identify the food, return exactly: ErrorInScanning
+        You are helping a health app log food from an image.
+        Respond with ONLY a single JSON object on one line, no markdown, no backticks.
+        JSON schema:
+        - If the image is usable: {"calories": <integer>, "label": "<short food name 2-5 words>"}
+        - If the image is not usable: {"error": "ErrorInScanning"}
+
+        Rules:
+        - calories must be an INTEGER (round your estimate).
+        - label must be short and human-friendly (e.g., "grilled chicken salad").
+        - Do not include units, explanations, or any extra keys.
         """
 
         let body: [String: Any] = [
-            "contents": [
-                [
-                    "parts": [
-                        ["text": prompt],
-                        ["inline_data": [
-                            "mime_type": "image/jpeg",
-                            "data": base64Image
-                        ]]
-                    ]
+            "contents": [[
+                "parts": [
+                    ["text": prompt],
+                    ["inline_data": ["mime_type": "image/jpeg", "data": base64]]
                 ]
-            ]
+            ]]
         ]
 
-        // Construct URLRequest
-        var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=\(apiKey)")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var req = URLRequest(url: URL(string:
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=\(apiKey)"
+        )!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("❌ Invalid HTTP response.")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
                 throw FoodAnalysisError.failedToAnalyze
             }
 
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let text = ((json?["candidates"] as? [[String: Any]])?.first?["content"] as? [String: Any])?["parts"] as? [[String: Any]]
-            let reply = text?.first?["text"] as? String ?? "ErrorInScanning"
+            // Pull model text
+            let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let parts = ((root?["candidates"] as? [[String: Any]])?.first?["content"] as? [String: Any])?["parts"] as? [[String: Any]]
+            let text = parts?.first?["text"] as? String ?? ""
 
-            print("✅ Analysis Result: \(reply)")
-            return reply
+            // Decode JSON safely
+            struct Raw: Codable {
+                let calories: Int?
+                let label: String?
+                let error: String?
+            }
+
+            guard let textData = text.data(using: .utf8) else {
+                throw FoodAnalysisError.failedToAnalyze
+            }
+            let raw = try JSONDecoder().decode(Raw.self, from: textData)
+
+            if raw.error == "ErrorInScanning" {
+                return .errorInScanning
+            }
+
+            guard let cals = raw.calories else {
+                return .errorInScanning
+            }
+
+            let label = (raw.label?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? raw.label!
+            : "Scanned food"
+
+            return .ok(calories: max(0, cals), description: label)
 
         } catch {
-            print("❌ Network error: \(error.localizedDescription)")
             throw FoodAnalysisError.networkError(error)
         }
     }

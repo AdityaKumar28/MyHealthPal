@@ -1,17 +1,17 @@
-////
-////  FoodAnalysisError.swift
-////  MyHealthPal
-////
-////  Created by Aditya Kumar on 24/08/25.
-////
 //
+//  FoodAnalysisError.swift
+//  MyHealthPal
 //
-//// FoodAnalysisError.swift
-//import Foundation
+//  Created by Aditya Kumar on 24/08/25.
 //
-//enum FoodAnalysisError: Error {
-//    case noAPIKeyConfigured
-//    case invalidResponse
-//    case unknown
-//}
-//
+
+
+// FoodAnalysisError.swift
+import Foundation
+
+enum FoodAnalysisError: Error {
+    case noAPIKeyConfigured
+    case failedToAnalyze
+    case networkError(Error)
+}
+

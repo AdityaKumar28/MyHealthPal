@@ -1,72 +1,143 @@
-// AISettingsView.swift
 import SwiftUI
+import UIKit
 
-enum AIProvider: String, CaseIterable, Identifiable {
-    case gemini = "Gemini"
-    case chatgpt = "ChatGPT"
-
-    var id: String { rawValue }
-    var userDefaultsKey: String {
-        switch self {
-        case .gemini: return "API_KEY_GEMINI"
-        case .chatgpt: return "API_KEY_CHATGPT"
-        }
-    }
+private struct InfoAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 struct AISettingsView: View {
-    @State private var selectedProvider: AIProvider = .gemini
-    @State private var apiKey: String = ""
-    @State private var showSavedMessage = false
+    @ObservedObject private var keyStore = AIKeyStore.shared
+    @State private var geminiKey: String = ""
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isValidating = false
+    @State private var localAlert: InfoAlert?
 
     var body: some View {
         Form {
-            Section(header: Text("Select AI Provider")) {
-                Picker("Provider", selection: $selectedProvider) {
-                    ForEach(AIProvider.allCases) { provider in
-                        Text(provider.rawValue).tag(provider)
+            // GOOGLE GEMINI
+            Section {
+                TextField("API Key", text: $geminiKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.body)
+
+                // Keep your Paste / Clear row exactly as-is
+                HStack {
+                    Button("Paste") {
+                        if let s = UIPasteboard.general.string {
+                            geminiKey = s
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer(minLength: 12)
+
+                    Button("Clear", role: .destructive) {
+                        geminiKey = ""
+                        keyStore.saveKey("", for: .gemini)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } header: {
+                Text("GOOGLE GEMINI")
+                    .font(.subheadline.weight(.semibold))
+            }
+
+            // Save row – label flips to “Validating…” while we check the key
+            Section(footer:
+                Text("Your key is stored locally in UserDefaults for this device and used only for API requests to Google’s Generative Language API.")
+            ) {
+                Button {
+                    Task { await validateAndSave() }
+                } label: {
+                    if isValidating {
+                        Text("Validating…")
+                    } else {
+                        Text("Save")
                     }
                 }
-                .pickerStyle(SegmentedPickerStyle())
-                .onChange(of: selectedProvider) { newProvider in
-                    apiKey = UserDefaults.standard.string(forKey: newProvider.userDefaultsKey) ?? ""
-                }
-            }
-
-            Section(header: Text("API Key for \(selectedProvider.rawValue)")) {
-                SecureField("Enter API Key", text: $apiKey)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-            }
-
-            Button("Save API Key") {
-                UserDefaults.standard.set(apiKey, forKey: selectedProvider.userDefaultsKey)
-                AIKeyStore.shared.saveKey(apiKey, for: selectedProvider)
-                showSavedMessage = true
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    showSavedMessage = false
-                }
-            }
-
-            if showSavedMessage {
-                HStack {
-                    Spacer()
-                    Label("Saved!", systemImage: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Spacer()
-                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isValidating || geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .navigationTitle("AI Key Management")
+        .navigationTitle("AI Key")
         .onAppear {
-            apiKey = UserDefaults.standard.string(forKey: selectedProvider.userDefaultsKey) ?? ""
+            geminiKey = keyStore.keys[.gemini] ?? ""
+        }
+        // Only used for validation FAIL; success alert shows after dismiss on the parent screen
+        .alert(item: $localAlert) { a in
+            Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text("OK")))
+        }
+    }
+
+    // MARK: - Validate then save
+
+    private func validateAndSave() async {
+        let key = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+
+        isValidating = true
+        let ok = await validateGeminiKey(key)
+        isValidating = false
+
+        if ok {
+            keyStore.saveKey(key, for: .gemini)
+            // Dismiss settings first…
+            dismiss()
+            // …then show a success alert on the previous screen
+            presentGlobalAlert(title: "Key Saved", message: "Your Gemini API key is valid and has been saved.")
+        } else {
+            localAlert = InfoAlert(
+                title: "Invalid Key",
+                message: "That key didn’t work. Make sure it’s correct and that the Generative Language API is enabled for this key in Google Cloud."
+            )
+        }
+    }
+
+    /// Lightweight validation using the public models list endpoint.
+    private func validateGeminiKey(_ key: String) async -> Bool {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?key=\(key)") else {
+            return false
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return false
+            }
+            // Optional sanity check of response shape
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return obj["models"] != nil
+            }
+            return true
+        } catch {
+            return false
         }
     }
 }
 
-#Preview {
-    NavigationView {
-        AISettingsView()
+// MARK: - Present a global UIKit alert after dismiss
+
+private func presentGlobalAlert(title: String, message: String) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        guard
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+            let window = scene.windows.first(where: { $0.isKeyWindow }),
+            var top = window.rootViewController
+        else { return }
+
+        while let presented = top.presentedViewController { top = presented }
+
+        let ac = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "OK", style: .default))
+        top.present(ac, animated: true)
     }
 }
