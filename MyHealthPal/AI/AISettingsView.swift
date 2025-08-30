@@ -12,17 +12,39 @@ struct AISettingsView: View {
     @State private var geminiKey: String = ""
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
     @State private var isValidating = false
     @State private var localAlert: InfoAlert?
+
+    // NEW: toggle to show/hide the key
+    @State private var showKey: Bool = false
+    // NEW: expand/collapse instructions
+    @State private var showHowTo: Bool = false
 
     var body: some View {
         Form {
             // GOOGLE GEMINI
             Section {
-                TextField("API Key", text: $geminiKey)
+                // TextField / SecureField with trailing eye icon
+                HStack(spacing: 8) {
+                    Group {
+                        if showKey {
+                            TextField("API Key", text: $geminiKey)
+                        } else {
+                            SecureField("API Key", text: $geminiKey)
+                        }
+                    }
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.body)
+
+                    Button(action: { showKey.toggle() }) {
+                        Image(systemName: showKey ? "eye.slash" : "eye")
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(showKey ? "Hide key" : "Show key")
+                    }
+                }
 
                 // Keep your Paste / Clear row exactly as-is
                 HStack {
@@ -53,14 +75,37 @@ struct AISettingsView: View {
                 Button {
                     Task { await validateAndSave() }
                 } label: {
-                    if isValidating {
-                        Text("Validating…")
-                    } else {
-                        Text("Save")
-                    }
+                    Text(isValidating ? "Validating…" : "Save")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isValidating || geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            // NEW: How-to instructions
+            Section {
+                DisclosureGroup(isExpanded: $showHowTo) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("1) Open Google AI Studio and sign in with your Google account.")
+                        Text("2) Create an API key (or use an existing one).")
+                        Text("3) Copy the key and paste it above.")
+                        Text("4) Make sure the **Generative Language API** is enabled for your account/project.")
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            if let url = URL(string: "https://aistudio.google.com/app/apikey") {
+                                openURL(url)
+                            }
+                        } label: {
+                            Label("Open Google AI Studio", systemImage: "safari")
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 4)
+                    }
+                    .font(.subheadline)
+                    .padding(.top, 4)
+                } label: {
+                    Label("How to get a Gemini API key", systemImage: "questionmark.circle")
+                }
             }
         }
         .navigationTitle("AI Key")
